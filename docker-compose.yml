@@ -1,0 +1,159 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: novel-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: novel_admin
+      POSTGRES_PASSWORD: novel_secret
+      POSTGRES_DB: novel_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U novel_admin -d novel_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - novel-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: novel-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - novel-network
+
+  elasticsearch:
+    image: elasticsearch:8.12.0
+    container_name: novel-elasticsearch
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - novel-network
+
+  prometheus:
+    image: prom/prometheus
+    container_name: novel-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./grafana/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+    networks:
+      - novel-network
+
+  grafana:
+    image: grafana/grafana
+    container_name: novel-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - novel-network
+
+  backend:
+    build: ./backend
+    container_name: novel-backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://novel_admin:novel_secret@postgres:5432/novel_db
+      REDIS_URL: redis://redis:6379/0
+      ES_URL: http://elasticsearch:9200
+    volumes:
+      - ./books:/app/books
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - novel-network
+
+  crawler:
+    build: ./crawler
+    container_name: novel-crawler
+    volumes:
+      - ./crawler/sources:/app/sources
+      - ./books:/app/books
+    depends_on:
+      - backend
+      - redis
+    restart: unless-stopped
+    networks:
+      - novel-network
+
+  frontend:
+    build: ./frontend
+    container_name: novel-frontend
+    ports:
+      - "3001:3001"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - novel-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: novel-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    networks:
+      - novel-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  es_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  novel-network:
+    driver: bridge

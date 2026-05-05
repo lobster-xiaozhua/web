@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package crawler;
+
+option go_package = "novel-crawler/proto";
+
+service CrawlerService {
+  rpc StartCrawl(CrawlRequest) returns (CrawlResponse);
+  rpc GetStatus(StatusRequest) returns (StatusResponse);
+  rpc ListSources(Empty) returns (SourceList);
+}
+
+message CrawlRequest {
+  string source_id = 1;
+  string novel_url = 2;
+}
+
+message CrawlResponse {
+  bool success = 1;
+  string message = 2;
+  int32 chapters_count = 3;
+}
+
+message StatusRequest {
+  string source_id = 1;
+}
+
+message StatusResponse {
+  bool running = 1;
+  int32 chapters_crawled = 2;
+  string current_novel = 3;
+}
+
+message Empty {}
+
+message SourceInfo {
+  string id = 1;
+  string name = 2;
+  string base_url = 3;
+}
+
+message SourceList {
+  repeated SourceInfo sources = 1;
+}

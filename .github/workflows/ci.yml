@@ -1,0 +1,97 @@
+name: Novel Platform CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: test, POSTGRES_PASSWORD: test, POSTGRES_DB: test_novel }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Install dependencies
+        run: cd backend && pip install -r requirements.txt
+      - name: Run tests
+        run: cd backend && pytest --cov=app --cov-report=html --cov-report=term -v
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with: { name: python-coverage, path: backend/htmlcov/ }
+
+  test-go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22' }
+      - name: Run tests
+        run: cd crawler && go test ./... -cover -coverprofile=coverage.out -v
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with: { name: go-coverage, path: crawler/coverage.out }
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Install dependencies
+        run: cd frontend && npm ci
+      - name: Run tests
+        run: cd frontend && npm test -- --coverage
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with: { name: frontend-coverage, path: frontend/coverage/ }
+
+  build-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with: { toolchain: stable, override: true }
+      - name: Build Rust extension
+        run: cd compressor && cargo build --release
+      - name: Run Rust tests
+        run: cd compressor && cargo test
+
+  build-and-push:
+    needs: [test-python, test-go, test-frontend, build-rust]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to local registry
+        uses: docker/login-action@v3
+        with:
+          registry: localhost:5000
+          username: admin
+          password: admin
+      - name: Build and push images
+        run: |
+          docker compose build
+          docker tag novel-website-backend localhost:5000/novel-backend:latest
+          docker tag novel-website-crawler localhost:5000/novel-crawler:latest
+          docker tag novel-website-frontend localhost:5000/novel-frontend:latest
+          docker push localhost:5000/novel-backend:latest
+          docker push localhost:5000/novel-crawler:latest
+          docker push localhost:5000/novel-frontend:latest
+      - name: Trigger lab update
+        run: echo "Lab environment update triggered"
