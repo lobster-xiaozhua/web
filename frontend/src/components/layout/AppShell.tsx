@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { usePathname } from "next/navigation";
 import Navbar from "@/components/layout/Navbar";
 import Sidebar from "@/components/layout/Sidebar";
+import ToastContainer from "@/components/ui/toast";
+import ErrorBoundary from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
 
 interface AppShellProps {
@@ -18,14 +20,17 @@ export default function AppShell({ children }: AppShellProps) {
   const isReaderPage = pathname.startsWith("/read");
 
   if (isReaderPage) {
-    return <>{children}</>;
+    return (
+      <ErrorBoundary>
+        {children}
+        <ToastContainer />
+      </ErrorBoundary>
+    );
   }
 
   return (
     <div className="min-h-screen">
-      <Navbar
-        onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
-      />
+      <Navbar onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
 
       <Sidebar
         collapsed={sidebarCollapsed}
@@ -39,7 +44,9 @@ export default function AppShell({ children }: AppShellProps) {
         )}
       >
         <main className={cn("p-6 md:p-10 lg:p-12 pb-[72px] page-enter", "relative z-10")}>
-          {children}
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
         </main>
       </div>
 
@@ -59,6 +66,8 @@ export default function AppShell({ children }: AppShellProps) {
       >
         <Sidebar onToggle={() => setSidebarOpen(false)} />
       </div>
+
+      <ToastContainer />
     </div>
   );
 }

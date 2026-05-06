@@ -1,28 +1,43 @@
 import logging
 from typing import Optional
 
-from elasticsearch import AsyncElasticsearch
-
 from app.core.config import get_settings
 from app.models.novel import Novel
 
 logger = logging.getLogger(__name__)
 
-es_client: Optional[AsyncElasticsearch] = None
+es_client = None
+_es_available: Optional[bool] = None
 
 NOVEL_INDEX = "novels"
 
 
-async def get_es_client() -> AsyncElasticsearch:
-    global es_client
-    if es_client is None:
-        settings = get_settings()
+async def _try_connect_es():
+    global es_client, _es_available
+    settings = get_settings()
+    try:
+        from elasticsearch import AsyncElasticsearch
         es_client = AsyncElasticsearch(settings.ES_URL)
-    return es_client
+        await es_client.ping()
+        _es_available = True
+        logger.info("Elasticsearch 连接成功: %s", settings.ES_URL)
+    except Exception as e:
+        _es_available = False
+        es_client = None
+        logger.warning("Elasticsearch 连接失败，使用数据库搜索: %s", e)
+
+
+async def get_es_client():
+    if _es_available and es_client:
+        return es_client
+    return None
 
 
 async def ensure_index():
     client = await get_es_client()
+    if client is None:
+        logger.info("Elasticsearch 不可用，跳过索引创建")
+        return
     exists = await client.indices.exists(index=NOVEL_INDEX)
     if not exists:
         mappings = {
@@ -39,6 +54,8 @@ async def ensure_index():
 
 async def index_novel(novel: Novel):
     client = await get_es_client()
+    if client is None:
+        return
     doc = {
         "title": novel.title,
         "author": novel.author,
@@ -51,6 +68,16 @@ async def index_novel(novel: Novel):
 
 async def search_novels(query: str, size: int = 20) -> list[dict]:
     client = await get_es_client()
+    if client is not None:
+        try:
+            return await _es_search(client, query, size)
+        except Exception as e:
+            logger.warning("Elasticsearch 搜索失败，回退到数据库搜索: %s", e)
+
+    return await _db_search(query, size)
+
+
+async def _es_search(client, query: str, size: int) -> list[dict]:
     result = await client.search(
         index=NOVEL_INDEX,
         query={
@@ -79,8 +106,47 @@ async def search_novels(query: str, size: int = 20) -> list[dict]:
     ]
 
 
+async def _db_search(query: str, size: int) -> list[dict]:
+    from sqlalchemy import select, or_
+    from app.db.database import async_session
+
+    results = []
+    async with async_session() as session:
+        stmt = select(Novel).where(
+            or_(
+                Novel.title.ilike(f"%{query}%"),
+                Novel.author.ilike(f"%{query}%"),
+                Novel.description.ilike(f"%{query}%"),
+            )
+        ).limit(size)
+        db_result = await session.execute(stmt)
+        novels = db_result.scalars().all()
+
+        for novel in novels:
+            results.append({
+                "id": str(novel.id),
+                "score": 1.0,
+                "source": {
+                    "title": novel.title,
+                    "author": novel.author,
+                    "category": novel.category,
+                    "description": novel.description or "",
+                },
+                "highlight": {},
+            })
+
+    return results
+
+
+async def init_search():
+    await _try_connect_es()
+    if _es_available:
+        await ensure_index()
+
+
 async def close_es():
-    global es_client
+    global es_client, _es_available
     if es_client:
         await es_client.close()
         es_client = None
+    _es_available = None
