@@ -5,16 +5,30 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.database import get_db
 from app.models.user import User
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+try:
+    import bcrypt as _bcrypt
+
+    def get_password_hash(password: str) -> str:
+        return _bcrypt.hashpw(password[:72].encode(), _bcrypt.gensalt()).decode()
+
+    def verify_password(plain: str, hashed: str) -> bool:
+        return _bcrypt.checkpw(plain[:72].encode(), hashed.encode())
+except ImportError:
+    import hashlib
+
+    def get_password_hash(password: str) -> str:
+        return hashlib.sha256(password.encode()).hexdigest()
+
+    def verify_password(plain: str, hashed: str) -> bool:
+        return hashlib.sha256(plain.encode()).hexdigest() == hashed
 
 
 def create_access_token(data: dict) -> str:
@@ -36,14 +50,6 @@ def verify_token(token: str) -> dict:
             detail="无效的认证凭据",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-
-def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
-
-
-def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
 
 
 async def get_current_user(

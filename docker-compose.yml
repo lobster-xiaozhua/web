@@ -93,11 +93,16 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://novel_admin:novel_secret@postgres:5432/novel_db
+      DATABASE_URL: postgresql+asyncpg://novel_admin:novel_secret@postgres:5432/novel_db
       REDIS_URL: redis://redis:6379/0
       ES_URL: http://elasticsearch:9200
+      DATABASE_TYPE: postgres
+      LOG_LEVEL: INFO
+      ENABLE_RATE_LIMIT: "true"
+      RATE_LIMIT_PER_MINUTE: 60
     volumes:
       - ./books:/app/books
+      - ./data:/app/data
     depends_on:
       postgres:
         condition: service_healthy

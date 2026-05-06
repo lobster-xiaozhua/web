@@ -1,39 +1,59 @@
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_client import make_asgi_app
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+try:
+    from prometheus_client import make_asgi_app
+    _prometheus_available = True
+except ImportError:
+    _prometheus_available = False
 
 from app.api.auth import router as auth_router
 from app.api.novels import router as novels_router
 from app.api.chapters import router as chapters_router
 from app.api.search import router as search_router
 from app.api.crawler import router as crawler_router
+from app.api.bookmarks import router as bookmarks_router
+from app.api.export import router as export_router
+from app.api.system import router as system_router
 from app.core.config import get_settings
+from app.core.middleware import ErrorHandlerMiddleware, RateLimitMiddleware, RequestLoggingMiddleware
 from app.db.database import engine
 from app.models.user import Base
-from app.services.cache import close_redis
-from app.services.search_service import close_es, ensure_index
+from app.models.advanced import Bookmark, ReadingStats, SystemConfig
+from app.services.cache import init_cache, close_redis
+from app.services.search_service import init_search, close_es
 from app.services.book_loader import scan_books_dir, start_watching
 from app.services.crawler_client import crawler_client
 
 logger = logging.getLogger(__name__)
 
+_start_time = time.time()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("应用启动中...")
+    settings = get_settings()
+
+    logging.basicConfig(
+        level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    logger.info("星穹书阁 v1.5.0 启动中...")
+    logger.info("数据库类型: %s", "SQLite" if settings.is_sqlite() else "PostgreSQL")
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("数据库表已创建")
 
-    try:
-        await ensure_index()
-        logger.info("Elasticsearch索引已就绪")
-    except Exception as e:
-        logger.warning("Elasticsearch连接失败: %s", e)
+    await init_cache()
+
+    await init_search()
 
     try:
         await crawler_client.connect()
@@ -47,7 +67,7 @@ async def lifespan(app: FastAPI):
 
     observer = start_watching()
 
-    logger.info("应用启动完成")
+    logger.info("星穹书阁 v1.5.0 启动完成")
     yield
 
     logger.info("应用关闭中...")
@@ -62,13 +82,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="小说阅读平台后端",
-    description="提供用户认证、小说/章节API、搜索、爬虫协调等功能",
-    version="1.0.0",
+    title="星穹书阁 - 小说阅读平台",
+    description="提供用户认证、小说/章节API、搜索、爬虫协调、收藏、导出等功能",
+    version="1.5.0",
     lifespan=lifespan,
 )
 
 settings = get_settings()
+
+app.add_middleware(ErrorHandlerMiddleware)
+app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.RATE_LIMIT_PER_MINUTE)
+app.add_middleware(RequestLoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,16 +102,60 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": "请求参数验证失败",
+            "errors": [
+                {
+                    "field": ".".join(str(loc) for loc in err["loc"]),
+                    "message": err["msg"],
+                }
+                for err in exc.errors()
+            ],
+        },
+    )
+
+
 app.include_router(auth_router)
 app.include_router(novels_router)
 app.include_router(chapters_router)
 app.include_router(search_router)
 app.include_router(crawler_router)
+app.include_router(bookmarks_router)
+app.include_router(export_router)
+app.include_router(system_router)
 
-metrics_app = make_asgi_app()
-app.mount("/metrics", metrics_app)
+if _prometheus_available:
+    metrics_app = make_asgi_app()
+    app.mount("/metrics", metrics_app)
 
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    from app.services.cache import _redis_available
+    from app.services.search_service import _es_available
+    from app.services.crawler_client import crawler_client as cc
+    from app.db.database import engine as eng
+    from sqlalchemy import text
+
+    db_status = "unknown"
+    try:
+        async with eng.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        db_status = "ok"
+    except Exception as e:
+        db_status = f"error: {e}"
+
+    return {
+        "status": "ok",
+        "version": "1.5.0",
+        "database": db_status,
+        "redis": "ok" if _redis_available else "fallback",
+        "elasticsearch": "ok" if _es_available else "fallback",
+        "crawler": "connected" if cc.channel else "disconnected",
+        "uptime": time.time() - _start_time,
+    }

@@ -2,18 +2,26 @@ import asyncio
 import logging
 from typing import Optional
 
-import grpc
-
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+_grpc_available = False
+try:
+    import grpc
+    _grpc_available = True
+except ImportError:
+    logger.info("grpcio 未安装，爬虫功能不可用")
+
 
 class CrawlerClient:
     def __init__(self):
-        self.channel: Optional[grpc.aio.Channel] = None
+        self.channel = None
 
     async def connect(self):
+        if not _grpc_available:
+            logger.info("grpcio 未安装，跳过爬虫客户端连接")
+            return
         settings = get_settings()
         self.channel = grpc.aio.insecure_channel(settings.CRAWLER_GRPC_ADDR)
         try:
@@ -37,6 +45,8 @@ class CrawlerClient:
             await self.connect()
 
     async def start_crawl(self, source_id: str, novel_url: str) -> dict:
+        if not _grpc_available:
+            return {"status": "error", "detail": "爬虫服务不可用: grpcio 未安装"}
         await self._ensure_connected()
         try:
             method = self.channel.unary_unary(
@@ -52,11 +62,13 @@ class CrawlerClient:
                 ],
             )
             return {"status": "started", "detail": str(response)}
-        except grpc.aio.AioRpcError as e:
+        except Exception as e:
             logger.error("启动爬虫失败: %s", e)
             return {"status": "error", "detail": str(e)}
 
     async def get_status(self, source_id: str) -> dict:
+        if not _grpc_available:
+            return {"status": "error", "detail": "爬虫服务不可用"}
         await self._ensure_connected()
         try:
             method = self.channel.unary_unary(
@@ -69,11 +81,13 @@ class CrawlerClient:
                 metadata=[("source_id", source_id)],
             )
             return {"status": "ok", "detail": str(response)}
-        except grpc.aio.AioRpcError as e:
+        except Exception as e:
             logger.error("获取爬虫状态失败: %s", e)
             return {"status": "error", "detail": str(e)}
 
     async def list_sources(self) -> list[dict]:
+        if not _grpc_available:
+            return []
         await self._ensure_connected()
         try:
             method = self.channel.unary_unary(
@@ -83,7 +97,7 @@ class CrawlerClient:
             )
             response = await method(b"")
             return [{"id": "default", "name": "默认书源", "detail": str(response)}]
-        except grpc.aio.AioRpcError as e:
+        except Exception as e:
             logger.error("获取书源列表失败: %s", e)
             return []
 
