@@ -4,15 +4,13 @@ import logging
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
-_INSECURE_DEFAULT_KEY = "super-secret-key-change-in-production"
-
 
 class Settings(BaseSettings):
     DATABASE_URL: str = ""
     DATABASE_TYPE: str = "auto"
     REDIS_URL: str = "redis://localhost:6379/0"
     ES_URL: str = "http://localhost:9200"
-    SECRET_KEY: str = _INSECURE_DEFAULT_KEY
+    SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
     BOOKS_DIR: str = os.path.join(os.getcwd(), "books")
@@ -59,8 +57,13 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     settings = Settings()
-    if settings.SECRET_KEY == _INSECURE_DEFAULT_KEY:
+    if not settings.SECRET_KEY:
+        if os.environ.get("ENVIRONMENT") == "production":
+            raise ValueError(
+                "生产环境必须设置 SECRET_KEY 环境变量，请设置一个至少32字节的随机字符串"
+            )
+        settings.SECRET_KEY = secrets.token_urlsafe(32)
         logging.warning(
-            "使用默认 SECRET_KEY，请在生产环境中通过环境变量设置安全的密钥！"
+            "未设置 SECRET_KEY，已自动生成临时密钥。请在生产环境中通过环境变量设置安全的密钥！"
         )
     return settings

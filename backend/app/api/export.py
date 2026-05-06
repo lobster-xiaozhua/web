@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import uuid
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.security import get_current_user
 from app.db.database import get_db
 from app.models.user import User
@@ -18,6 +20,25 @@ from app.services.book_loader import _decompress_content, load_novel_from_dir
 from app.services.cache import delete_cached_pattern
 
 router = APIRouter(prefix="/api/export", tags=["导出"])
+
+
+def _sanitize_filename(name: str) -> str:
+    name = re.sub(r'[\\/:*?"<>|]', "_", name)
+    name = name.strip(". ")
+    if not name:
+        name = "export"
+    return name
+
+
+def _resolve_safe_path(base_dir: Path, target_path: Path) -> Path:
+    try:
+        resolved = target_path.resolve()
+        base_resolved = base_dir.resolve()
+        if not str(resolved).startswith(str(base_resolved)):
+            raise HTTPException(status_code=400, detail="路径不在允许的目录范围内")
+        return resolved
+    except (OSError, RuntimeError):
+        raise HTTPException(status_code=400, detail="无效的路径")
 
 
 @router.post("/novel")
@@ -47,6 +68,8 @@ async def export_novel(
         except (ValueError, IndexError):
             raise HTTPException(status_code=400, detail="章节范围格式错误，示例: 1-10")
 
+    safe_title = _sanitize_filename(novel.title)
+
     if data.format == "json":
         export_data = {
             "title": novel.title,
@@ -63,7 +86,7 @@ async def export_novel(
                 "word_count": ch.word_count,
             })
         content_bytes = json.dumps(export_data, ensure_ascii=False, indent=2).encode("utf-8")
-        filename = f"{novel.title}.json"
+        filename = f"{safe_title}.json"
         media_type = "application/json"
     else:
         lines = [f"{novel.title}\n作者: {novel.author}\n{'=' * 40}\n\n"]
@@ -71,7 +94,7 @@ async def export_novel(
             content = _decompress_content(ch.content) if ch.content else ""
             lines.append(f"第{ch.chapter_index}章 {ch.title}\n\n{content}\n\n{'─' * 40}\n\n")
         content_bytes = "".join(lines).encode("utf-8")
-        filename = f"{novel.title}.txt"
+        filename = f"{safe_title}.txt"
         media_type = "text/plain; charset=utf-8"
 
     stream = io.BytesIO(content_bytes)
@@ -91,7 +114,9 @@ async def batch_import(
     result = BatchImportResponse()
 
     if data.source == "local" and data.path:
-        books_path = Path(data.path)
+        settings = get_settings()
+        base_books_dir = Path(settings.BOOKS_DIR)
+        books_path = _resolve_safe_path(base_books_dir, Path(data.path))
         if not books_path.exists():
             raise HTTPException(status_code=400, detail="指定路径不存在")
 

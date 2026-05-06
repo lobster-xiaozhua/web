@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import bcrypt as _bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -13,22 +14,20 @@ from app.models.user import User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
-try:
-    import bcrypt as _bcrypt
 
-    def get_password_hash(password: str) -> str:
-        return _bcrypt.hashpw(password[:72].encode(), _bcrypt.gensalt()).decode()
+def get_password_hash(password: str) -> str:
+    if len(password.encode("utf-8")) > 72:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="密码长度不能超过72字节",
+        )
+    return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
 
-    def verify_password(plain: str, hashed: str) -> bool:
-        return _bcrypt.checkpw(plain[:72].encode(), hashed.encode())
-except ImportError:
-    import hashlib
 
-    def get_password_hash(password: str) -> str:
-        return hashlib.sha256(password.encode()).hexdigest()
-
-    def verify_password(plain: str, hashed: str) -> bool:
-        return hashlib.sha256(plain.encode()).hexdigest() == hashed
+def verify_password(plain: str, hashed: str) -> bool:
+    if len(plain.encode("utf-8")) > 72:
+        return False
+    return _bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 def create_access_token(data: dict) -> str:

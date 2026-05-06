@@ -98,8 +98,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+    expose_headers=["Content-Disposition"],
+    max_age=600,
 )
 
 
@@ -136,9 +138,6 @@ if _prometheus_available:
 
 @app.get("/health")
 async def health_check():
-    from app.services.cache import _redis_available
-    from app.services.search_service import _es_available
-    from app.services.crawler_client import crawler_client as cc
     from app.db.database import engine as eng
     from sqlalchemy import text
 
@@ -147,15 +146,9 @@ async def health_check():
         async with eng.connect() as conn:
             await conn.execute(text("SELECT 1"))
         db_status = "ok"
-    except Exception as e:
-        db_status = f"error: {e}"
+    except Exception:
+        db_status = "error"
 
     return {
-        "status": "ok",
-        "version": "1.5.0",
-        "database": db_status,
-        "redis": "ok" if _redis_available else "fallback",
-        "elasticsearch": "ok" if _es_available else "fallback",
-        "crawler": "connected" if cc.channel else "disconnected",
-        "uptime": time.time() - _start_time,
+        "status": "ok" if db_status == "ok" else "degraded",
     }

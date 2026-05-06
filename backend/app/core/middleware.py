@@ -1,4 +1,5 @@
 import logging
+import os
 import traceback
 import time
 from typing import Callable
@@ -23,13 +24,14 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                 str(exc),
                 traceback.format_exc(),
             )
+            is_dev = os.environ.get("ENVIRONMENT") != "production"
+            content = {"detail": "服务器内部错误"}
+            if is_dev:
+                content["error"] = str(exc)
+                content["path"] = request.url.path
             return JSONResponse(
                 status_code=500,
-                content={
-                    "detail": "服务器内部错误",
-                    "error": str(exc),
-                    "path": request.url.path,
-                },
+                content=content,
             )
 
 
@@ -38,6 +40,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.requests_per_minute = requests_per_minute
         self._request_counts: dict[str, list[float]] = {}
+        self._last_cleanup = time.time()
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         from app.core.config import get_settings
@@ -67,7 +70,20 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             )
 
         self._request_counts[client_ip].append(now)
+
+        if now - self._last_cleanup > 300:
+            self._cleanup_old_entries(now, window)
+            self._last_cleanup = now
+
         return await call_next(request)
+
+    def _cleanup_old_entries(self, now: float, window: float):
+        expired_ips = [
+            ip for ip, timestamps in self._request_counts.items()
+            if not any(now - t < window for t in timestamps)
+        ]
+        for ip in expired_ips:
+            del self._request_counts[ip]
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
