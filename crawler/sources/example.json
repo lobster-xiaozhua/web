@@ -1,0 +1,17 @@
+{
+  "id": "biquge_example",
+  "name": "笔趣阁示例",
+  "base_url": "https://example.com",
+  "detail_page": {
+    "title_selector": "#bookinfo h1",
+    "author_selector": "#bookinfo .author",
+    "chapter_list_selector": "#chapterlist li a",
+    "chapter_link_attr": "href"
+  },
+  "chapter_page": {
+    "title_selector": ".chapter-title",
+    "content_selector": "#content"
+  },
+  "garbage_url_patterns": ["/ad/", "/popup/", "javascript:", "\\.gif", "\\.jpg"],
+  "crawl_interval_seconds": 3600
+}
