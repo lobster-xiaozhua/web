@@ -20,24 +20,45 @@ async def get_redis() -> aioredis.Redis:
 
 
 async def get_cached(key: str) -> Optional[str]:
-    client = await get_redis()
-    value = await client.get(key)
-    if value:
-        logger.debug("缓存命中: %s", key)
-    return value
+    try:
+        client = await get_redis()
+        value = await client.get(key)
+        if value:
+            logger.debug("缓存命中: %s", key)
+        return value
+    except Exception as e:
+        logger.warning("缓存读取失败: %s - %s", key, e)
+        return None
 
 
 async def set_cached(key: str, value: Any, ttl: int = 300) -> None:
-    client = await get_redis()
-    if isinstance(value, (dict, list)):
-        value = json.dumps(value, ensure_ascii=False)
-    await client.set(key, value, ex=ttl)
-    logger.debug("设置缓存: %s (TTL=%d)", key, ttl)
+    try:
+        client = await get_redis()
+        if isinstance(value, str):
+            serialized = value
+        else:
+            serialized = json.dumps(value, ensure_ascii=False, default=str)
+        await client.set(key, serialized, ex=ttl)
+        logger.debug("设置缓存: %s (TTL=%d)", key, ttl)
+    except Exception as e:
+        logger.warning("缓存写入失败: %s - %s", key, e)
 
 
 async def delete_cached(key: str) -> None:
-    client = await get_redis()
-    await client.delete(key)
+    try:
+        client = await get_redis()
+        await client.delete(key)
+    except Exception as e:
+        logger.warning("缓存删除失败: %s - %s", key, e)
+
+
+async def delete_cached_pattern(pattern: str) -> None:
+    try:
+        client = await get_redis()
+        async for key in client.scan_iter(match=pattern):
+            await client.delete(key)
+    except Exception as e:
+        logger.warning("缓存模式删除失败: %s - %s", pattern, e)
 
 
 async def close_redis():

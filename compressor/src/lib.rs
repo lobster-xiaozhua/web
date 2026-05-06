@@ -23,13 +23,13 @@ fn decompress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     Ok(buf)
 }
 
-#[pyfunction]
+#[pyfunction(name = "compress")]
 fn compress_py(py: Python<'_>, data: &[u8]) -> PyResult<PyObject> {
     let compressed = py.allow_threads(|| compress(data));
     Ok(PyBytes::new_bound(py, &compressed).into_any().unbind())
 }
 
-#[pyfunction]
+#[pyfunction(name = "decompress")]
 fn decompress_py(py: Python<'_>, data: &[u8]) -> PyResult<PyObject> {
     let result = py.allow_threads(|| {
         decompress(data).map_err(|e| {

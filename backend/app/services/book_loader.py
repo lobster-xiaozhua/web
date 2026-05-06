@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 import aiofiles
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileModifiedEvent
@@ -20,6 +20,8 @@ from app.models.chapter import Chapter
 logger = logging.getLogger(__name__)
 
 CHAPTER_PATTERN = re.compile(r"第(\d+)章[_\s](.+)\.txt$")
+
+_event_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def _compress_content(text: str) -> bytes:
@@ -94,6 +96,15 @@ async def load_novel_from_dir(session: AsyncSession, novel_dir: Path) -> Optiona
     for chapter_file in sorted(novel_dir.glob("*.txt")):
         await load_chapter_from_file(session, novel.id, chapter_file)
 
+    await session.refresh(novel)
+    total_result = await session.execute(
+        select(func.coalesce(func.sum(Chapter.word_count), 0)).where(
+            Chapter.novel_id == novel.id
+        )
+    )
+    novel.total_words = total_result.scalar() or 0
+    await session.flush()
+
     return novel
 
 
@@ -143,7 +154,12 @@ class BooksDirHandler(FileSystemEventHandler):
         if not event.src_path.endswith(".txt"):
             return
         logger.info("检测到新文件: %s", event.src_path)
-        asyncio.get_event_loop().create_task(self._handle_file(event.src_path))
+        if _event_loop is not None and _event_loop.is_running():
+            _event_loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(self._handle_file(event.src_path), loop=_event_loop)
+            )
+        else:
+            logger.warning("事件循环不可用，跳过文件处理: %s", event.src_path)
 
     def on_modified(self, event):
         if event.is_directory:
@@ -173,10 +189,13 @@ class BooksDirHandler(FileSystemEventHandler):
 
 
 def start_watching() -> Observer:
+    global _event_loop
     settings = get_settings()
     books_path = Path(settings.BOOKS_DIR)
     if not books_path.exists():
         books_path.mkdir(parents=True, exist_ok=True)
+
+    _event_loop = asyncio.get_running_loop()
 
     observer = Observer()
     handler = BooksDirHandler()

@@ -25,17 +25,15 @@ async def ensure_index():
     client = await get_es_client()
     exists = await client.indices.exists(index=NOVEL_INDEX)
     if not exists:
-        mapping = {
-            "mappings": {
-                "properties": {
-                    "title": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
-                    "author": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
-                    "category": {"type": "keyword"},
-                    "description": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
-                }
+        mappings = {
+            "properties": {
+                "title": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+                "author": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+                "category": {"type": "keyword"},
+                "description": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
             }
         }
-        await client.indices.create(index=NOVEL_INDEX, body=mapping)
+        await client.indices.create(index=NOVEL_INDEX, mappings=mappings)
         logger.info("创建Elasticsearch索引: %s", NOVEL_INDEX)
 
 
@@ -53,22 +51,22 @@ async def index_novel(novel: Novel):
 
 async def search_novels(query: str, size: int = 20) -> list[dict]:
     client = await get_es_client()
-    body = {
-        "query": {
+    result = await client.search(
+        index=NOVEL_INDEX,
+        query={
             "multi_match": {
                 "query": query,
                 "fields": ["title^3", "author^2", "description"],
             }
         },
-        "highlight": {
+        highlight={
             "fields": {
                 "title": {},
                 "description": {},
             }
         },
-        "size": size,
-    }
-    result = await client.search(index=NOVEL_INDEX, body=body)
+        size=size,
+    )
     hits = result.get("hits", {}).get("hits", [])
     return [
         {

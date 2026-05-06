@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional
 
@@ -7,40 +8,37 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-PROTO_DIR = "/app/proto"
-
 
 class CrawlerClient:
     def __init__(self):
         self.channel: Optional[grpc.aio.Channel] = None
-        self.stub = None
 
     async def connect(self):
         settings = get_settings()
         self.channel = grpc.aio.insecure_channel(settings.CRAWLER_GRPC_ADDR)
         try:
-            await self.channel.channel_ready()
+            await asyncio.wait_for(
+                self.channel.channel_ready(),
+                timeout=5,
+            )
             logger.info("gRPC连接已建立: %s", settings.CRAWLER_GRPC_ADDR)
-        except grpc.aio.AioRpcError:
-            logger.warning("gRPC连接失败: %s", settings.CRAWLER_GRPC_ADDR)
+        except asyncio.TimeoutError:
+            logger.warning("gRPC连接超时: %s", settings.CRAWLER_GRPC_ADDR)
+        except Exception as e:
+            logger.warning("gRPC连接失败: %s", e)
 
     async def close(self):
         if self.channel:
             await self.channel.close()
             self.channel = None
-            self.stub = None
 
-    async def start_crawl(self, source_id: str, novel_url: str) -> dict:
+    async def _ensure_connected(self):
         if not self.channel:
             await self.connect()
 
+    async def start_crawl(self, source_id: str, novel_url: str) -> dict:
+        await self._ensure_connected()
         try:
-            request = grpc.aio._metadata._ClientCallMetadata(
-                metadata=(
-                    ("source_id", source_id),
-                    ("novel_url", novel_url),
-                ),
-            )
             method = self.channel.unary_unary(
                 "/crawler.CrawlerService/StartCrawl",
                 request_serializer=lambda x: x,
@@ -59,9 +57,7 @@ class CrawlerClient:
             return {"status": "error", "detail": str(e)}
 
     async def get_status(self, source_id: str) -> dict:
-        if not self.channel:
-            await self.connect()
-
+        await self._ensure_connected()
         try:
             method = self.channel.unary_unary(
                 "/crawler.CrawlerService/GetStatus",
@@ -78,9 +74,7 @@ class CrawlerClient:
             return {"status": "error", "detail": str(e)}
 
     async def list_sources(self) -> list[dict]:
-        if not self.channel:
-            await self.connect()
-
+        await self._ensure_connected()
         try:
             method = self.channel.unary_unary(
                 "/crawler.CrawlerService/ListSources",

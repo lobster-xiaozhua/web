@@ -10,6 +10,7 @@ from app.api.novels import router as novels_router
 from app.api.chapters import router as chapters_router
 from app.api.search import router as search_router
 from app.api.crawler import router as crawler_router
+from app.core.config import get_settings
 from app.db.database import engine
 from app.models.user import Base
 from app.services.cache import close_redis
@@ -67,9 +68,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+settings = get_settings()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

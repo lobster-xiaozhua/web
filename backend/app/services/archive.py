@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.novel import Novel, NovelStatus
@@ -29,8 +29,8 @@ async def archive_old_novels(session: AsyncSession) -> int:
         )
         chapters = chapters_result.scalars().all()
 
-        for chapter in chapters:
-            archived = ArchivedChapter(
+        archived_chapters = [
+            ArchivedChapter(
                 id=chapter.id,
                 novel_id=chapter.novel_id,
                 title=chapter.title,
@@ -41,7 +41,9 @@ async def archive_old_novels(session: AsyncSession) -> int:
                 word_count=chapter.word_count,
                 created_at=chapter.created_at,
             )
-            session.add(archived)
+            for chapter in chapters
+        ]
+        session.add_all(archived_chapters)
 
         await session.execute(delete(Chapter).where(Chapter.novel_id == novel.id))
         archived_count += len(chapters)

@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -50,11 +51,18 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     payload = verify_token(token)
-    user_id: Optional[str] = payload.get("sub")
-    if user_id is None:
+    user_id_str: Optional[str] = payload.get("sub")
+    if user_id_str is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="无效的认证凭据",
+        )
+    try:
+        user_id = uuid.UUID(user_id_str)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的用户ID",
         )
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
