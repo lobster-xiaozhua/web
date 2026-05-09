@@ -1,6 +1,10 @@
 import asyncio
+import os
 from typing import AsyncGenerator
 import uuid
+
+os.environ["ENABLE_RATE_LIMIT"] = "false"
+os.environ["TESTING"] = "true"
 
 import pytest
 import pytest_asyncio
@@ -11,6 +15,9 @@ from sqlalchemy import event
 from app.main import app
 from app.models.user import Base
 from app.db.database import get_db
+from app.core.config import get_settings
+
+get_settings.cache_clear()
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
